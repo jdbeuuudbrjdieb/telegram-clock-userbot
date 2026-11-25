@@ -11,7 +11,7 @@ from telethon.tl.types import SendMessageTypingAction
 from telethon.errors import FloodWaitError, RPCError
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۱. تنظیمات حرفه‌ای لاگ (برای رصد دقیق در گیت‌هاب)
+# ۱. تنظیمات لاگ
 # ══════════════════════════════════════════════════════════════════════════════
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger("MasterClock")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۲. خواندن اطلاعات امن (از Secrets گیت‌هاب)
+# ۲. خواندن اطلاعات امن
 # ══════════════════════════════════════════════════════════════════════════════
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -28,90 +28,67 @@ SESSION_STRING = os.getenv("SESSION_STRING", "")
 BASE_NAME = os.getenv("BASE_NAME", "My Name")
 
 if not API_ID or not API_HASH or not SESSION_STRING:
-    logger.critical("❌ متغیرهای محیطی (API_ID, API_HASH, SESSION_STRING) یافت نشدند.")
+    logger.critical("❌ متغیرهای محیطی یافت نشدند.")
     exit(1)
 
-# منطقه زمانی دقیق افغانستان (کابل - UTC+4:30)
 KABUL_TZ = ZoneInfo("Asia/Kabul")
-
-# ساخت کلاینت تلگرام
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۳. هسته اصلی ربات (ساعت + آنلاین + تایپ)
+# ۳. هسته اصلی
 # ══════════════════════════════════════════════════════════════════════════════
 async def master_loop():
-    """حلقه بی‌نقص برای مدیریت پروفایل، وضعیت و تایپ"""
-    logger.info("🌟 هسته اصلی فعال شد. شروع چرخه به‌روزرسانی...")
+    logger.info("🌟 هسته اصلی فعال شد...")
     
     while True:
         try:
-            # ۱. محاسبه دقیق زمان افغانستان
             now = datetime.now(KABUL_TZ)
             time_str = now.strftime("%H:%M")
-            
-            # ۲. ساخت نام جدید (با محدودیت ۶۴ کاراکتری تلگرام)
             new_name = f"🕒 {time_str} | {BASE_NAME}"
             
-            # ۳. آپدیت نام پروفایل
             await client(UpdateProfileRequest(first_name=new_name[:64]))
-            
-            # ۴. آپدیت وضعیت به آنلاین همیشگی
             await client(UpdateStatusRequest(offline=False))
             
-            # ۵. ارسال سیگنال تایپ کردن
             try:
-                # دریافت آخرین چت باز شده
                 dialogs = await client.get_dialogs(limit=1)
-                if dialogs:
-                    peer = dialogs[0].entity
-                else:
-                    # اگر هیچ چتی نبود، در Saved Messages تایپ کن
-                    peer = await client.get_me()
-                
+                peer = dialogs[0].entity if dialogs else await client.get_me()
                 await client(SetTypingRequest(peer=peer, action=SendMessageTypingAction()))
-            except Exception as typing_err:
-                logger.debug(f"⚠️ خطای جزئی در تایپ: {typing_err}")
+            except: pass
             
-            # لاگ موفقیت‌آمیز
-            logger.info(f"✅ نام: '{new_name}' | وضعیت: آنلاین 🟢 | تایپ: فعال ⌨️ | زمان کابل: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"✅ نام: '{new_name}' | آنلاین 🟢 | تایپ ⌨️")
             
         except FloodWaitError as e:
-            # مدیریت هوشمند محدودیت تلگرام
-            logger.warning(f"⚠️ محدودیت تلگرام! باید {e.seconds} ثانیه صبر کنیم.")
+            logger.warning(f"⚠️ محدودیت: {e.seconds} ثانیه")
             await asyncio.sleep(e.seconds)
-        except RPCError as e:
-            logger.error(f"❌ خطای RPC تلگرام: {e}")
-            await asyncio.sleep(10)
         except Exception as e:
-            logger.error(f"❌ خطای غیرمنتظره: {e}")
+            logger.error(f"❌ خطا: {e}")
             await asyncio.sleep(10)
             
-        # صبر تا دقیقه بعد
         await asyncio.sleep(60)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ۴. نقطه ورود
 # ══════════════════════════════════════════════════════════════════════════════
 async def main():
-    logger.info("🚀 در حال اتصال به سرورهای تلگرام...")
+    logger.info("🚀 اتصال به تلگرام...")
     await client.connect()
     
     if not await client.is_user_authorized():
-        logger.error("❌ سشن منقضی شده یا نامعتبر است. لطفاً SESSION_STRING جدید بسازید.")
+        logger.error("❌ سشن نامعتبر است.")
         return
 
     me = await client.get_me()
-    logger.info(f"✅ اتصال برقرار شد. حساب متصل: {me.first_name} (ID: {me.id})")
-    logger.info("🎯 سه قابلیت خارق‌العاده (ساعت کابل، آنلاین همیشگی، تایپ مداوم) فعال شدند.")
-    
-    # اجرای حلقه اصلی
+    logger.info(f"✅ متصل شد: {me.first_name}")
     await master_loop()
 
 if __name__ == "__main__":
     try:
         client.loop.run_until_complete(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("👋 ربات به درخواست شما خاموش شد.")
-    except Exception as e:
-        logger.critical(f"💥 خطای بحرانی در اجرا: {e}")
+        logger.info("👋 خاموش شد.")
+    finally:
+        # 🛡️ خاموشی امن: اتصال را قبل از بسته شدن سرور قطع می‌کنیم
+        try:
+            client.loop.run_until_complete(client.disconnect())
+            logger.info("🔌 اتصال به تلگرام به درستی قطع شد.")
+        except: pass
