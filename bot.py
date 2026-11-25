@@ -1,9 +1,11 @@
 import os
 import asyncio
 import logging
+import re
+import yt_dlp
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo  # محاسبه دقیق و استاندارد منطقه زمانی
-from telethon import TelegramClient
+from zoneinfo import ZoneInfo
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateProfileRequest, UpdateStatusRequest
 from telethon.tl.functions.messages import SetTypingRequest
@@ -17,10 +19,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger("UserBotClock")
+logger = logging.getLogger("SuperUserBot")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۲. خواندن اطلاعات امن از Secrets
+# ۲. خواندن اطلاعات امن
 # ══════════════════════════════════════════════════════════════════════════════
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -28,74 +30,131 @@ SESSION_STRING = os.getenv("SESSION_STRING", "")
 BASE_NAME = os.getenv("BASE_NAME", "My Name")
 
 if not API_ID or not API_HASH or not SESSION_STRING:
-    logger.error("❌ متغیرهای محیطی (API_ID, API_HASH, SESSION_STRING) یافت نشدند.")
+    logger.error("❌ متغیرهای محیطی یافت نشدند.")
     exit(1)
 
-# منطقه زمانی دقیق کابل (افغانستان)
 KABUL_TZ = ZoneInfo("Asia/Kabul")
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۳. تابع اصلی
+# ۳. قابلیت دانلود خودکار رسانه
 # ══════════════════════════════════════════════════════════════════════════════
-async def main():
-    logger.info("🚀 در حال اتصال به تلگرام...")
+URL_REGEX = re.compile(r'(https?://[^\s]+)')
+
+YDL_OPTS = {
+    'outtmpl': 'downloads/%(id)s.%(ext)s',
+    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    'quiet': True,
+    'no_warnings': True,
+    'noplaylist': True,
+    'max_filesize': 50000000,
+}
+
+@client.on(events.NewMessage(outgoing=True, pattern=URL_REGEX))
+async def auto_download_handler(event):
+    logger.info("🔔 سیگنال پیام دریافتی...")
     
-    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    await client.connect()
-
-    if not await client.is_user_authorized():
-        logger.error("❌ سشن منقضی شده است. لطفاً SESSION_STRING جدید بسازید.")
+    me = await client.get_me()
+    if event.chat_id != me.id:
+        logger.info(f"⏭️ پیام در Saved Messages نیست (Chat ID: {event.chat_id}). نادیده گرفته شد.")
         return
 
-    logger.info("✅ اتصال برقرار شد. شروع فرآیند به‌روزرسانی...")
+    url = event.raw_text.strip()
+    logger.info(f"🔗 لینک در Saved Messages: {url}")
+    
+    status_msg = await event.reply("⏳ **در حال پردازش لینک...** لطفاً صبر کنید.")
+    
+    try:
+        os.makedirs('downloads', exist_ok=True)
+        loop = asyncio.get_event_loop()
+        
+        def download_media():
+            logger.info("📥 شروع دانلود با yt-dlp...")
+            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if not os.path.exists(filename):
+                    base = os.path.splitext(filename)[0]
+                    for ext in ['.mp4', '.mkv', '.webm', '.mp3']:
+                        if os.path.exists(base + ext):
+                            filename = base + ext
+                            break
+                return filename, info
+        
+        filename, info = await loop.run_in_executor(None, download_media)
+        logger.info(f"✅ دانلود کامل شد: {filename}")
+        
+        await status_msg.edit("📤 **در حال آپلود به تلگرام...**")
+        
+        caption = f"✅ **دانلود شد:**\n{info.get('title', 'بدون عنوان')}"
+        await client.send_file(
+            me.id,
+            filename,
+            caption=caption,
+            reply_to=event.message.id
+        )
+        logger.info("✅ فایل با موفقیت به تلگرام ارسال شد.")
+        
+        if os.path.exists(filename):
+            os.remove(filename)
+            logger.info("🗑 فایل موقت پاک شد.")
+            
+        await status_msg.delete()
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در دانلود: {e}")
+        await status_msg.edit(f"❌ **خطا در دانلود:**\n`{str(e)[:200]}`")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ۴. حلقه آپدیت پروفایل (ساعت، آنلاین، تایپ)
+# ══════════════════════════════════════════════════════════════════════════════
+async def update_profile_loop():
     while True:
         try:
-            # ۱. محاسبه زمان دقیق کابل (افغانستان)
             now = datetime.now(KABUL_TZ)
-            time_str = now.strftime("%H:%M")  # ساعت:دقیقه
-            
-            # لاگ برای مشاهده دقیق زمان در گیت‌هاب
-            logger.info(f"⏰ ساعت کابل: {now.strftime('%H:%M:%S')} | ساعت جهانی (UTC): {datetime.now(timezone.utc).strftime('%H:%M')}")
-            
-            # ۲. ساخت نام جدید: 🕒 14:35 | Ali
+            time_str = now.strftime("%H:%M")
             new_name = f"🕒 {time_str} | {BASE_NAME}"
             
-            # ۳. آپدیت نام پروفایل
             await client(UpdateProfileRequest(first_name=new_name[:64]))
-            
-            # ۴. آپدیت وضعیت به آنلاین (Always Online)
             await client(UpdateStatusRequest(offline=False))
             
-            # ۵. قابلیت جدید: همیشه در حال تایپ (Always Typing)
-            # ربات وضعیت تایپ را به آخرین چت باز شده شما می‌فرستد
             try:
                 dialogs = await client.get_dialogs(limit=1)
                 if dialogs:
-                    # اگر چتی وجود داشته باشد، در همان چت تایپ می‌کند
-                    peer = dialogs[0].entity
-                    await client(SetTypingRequest(peer=peer, action=SendMessageTypingAction()))
-                    logger.info(f"⌨️ ارسال وضعیت 'در حال تایپ' به چت: {dialogs[0].name}")
-                else:
-                    # اگر هیچ چتی نبود (اکانت نو)، در چت Saved Messages تایپ می‌کند
-                    me = await client.get_me()
-                    await client(SetTypingRequest(peer=me, action=SendMessageTypingAction()))
-            except Exception as typing_err:
-                logger.warning(f"⚠️ خطای تایپ: {typing_err}")
+                    await client(SetTypingRequest(peer=dialogs[0].entity, action=SendMessageTypingAction()))
+            except: 
+                pass
             
-            logger.info(f"✅ پروفایل آپدیت شد: '{new_name}' | وضعیت: آنلاین 🟢 | در حال تایپ ⌨️")
+            logger.info(f"✅ پروفایل: '{new_name}' | آنلاین 🟢 | تایپ ⌨️")
             
         except FloodWaitError as e:
-            logger.warning(f"⚠️ محدودیت تلگرام. باید {e.seconds} ثانیه صبر کنیم.")
+            logger.warning(f"⚠️ محدودیت: {e.seconds} ثانیه")
             await asyncio.sleep(e.seconds)
         except Exception as e:
-            logger.error(f"❌ خطای غیرمنتظره: {e}")
+            logger.error(f"❌ خطا در آپدیت: {e}")
             
-        # صبر ۶۰ ثانیه تا دقیقه بعد
         await asyncio.sleep(60)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ۵. نقطه ورود (Main)
+# ══════════════════════════════════════════════════════════════════════════════
+async def main():
+    logger.info("🚀 اتصال به تلگرام...")
+    await client.connect()
+    
+    if not await client.is_user_authorized():
+        logger.error("❌ سشن منقضی شده.")
+        return
+
+    me = await client.get_me()
+    logger.info(f"✅ متصل شد به: {me.first_name} (ID: {me.id})")
+    logger.info("💡 دانلودر فعال است. لینک را به Saved Messages بفرستید.")
+    
+    asyncio.create_task(update_profile_loop())
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        client.loop.run_until_complete(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("👋 خاموش شدن ربات.")
+        logger.info("👋 خاموش شد.")
