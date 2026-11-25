@@ -1,0 +1,47 @@
+name: Run Live Clock Userbot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+jobs:
+  run-clock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Clock
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          SESSION_STRING: ${{ secrets.SESSION_STRING }}
+          BASE_NAME: ${{ secrets.BASE_NAME }}
+        run: |
+          echo "--- DEBUG START ---"
+          if [ -z "$API_ID" ]; then echo "❌ API_ID is EMPTY"; else echo "✅ API_ID is SET"; fi
+          if [ -z "$API_HASH" ]; then echo "❌ API_HASH is EMPTY"; else echo "✅ API_HASH is SET"; fi
+          if [ -z "$SESSION_STRING" ]; then echo "❌ SESSION_STRING is EMPTY"; else echo "✅ SESSION_STRING is SET"; fi
+          echo "--- DEBUG END ---"
+          python bot.py || echo "Restarting..."
+
+      - name: Trigger next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-bot.yml/dispatches" \
+            -d '{"ref":"main"}'
