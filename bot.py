@@ -37,7 +37,7 @@ KABUL_TZ = ZoneInfo("Asia/Kabul")
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۳. قابلیت دانلود خودکار رسانه
+# ۳. تنظیمات پیشرفته yt-dlp (دور زدن بلاک یوتیوب)
 # ══════════════════════════════════════════════════════════════════════════════
 URL_REGEX = re.compile(r'(https?://[^\s]+)')
 
@@ -47,7 +47,19 @@ YDL_OPTS = {
     'quiet': True,
     'no_warnings': True,
     'noplaylist': True,
-    'max_filesize': 50000000,
+    'max_filesize': 50000000, # ۵۰ مگابایت
+    
+    # 🛡️ ترفندهای دور زدن بلاک یوتیوب:
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['ios', 'web'], # استفاده از کلاینت iOS که بلاک نمی‌شود
+        }
+    },
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-us,en;q=0.5',
+    }
 }
 
 @client.on(events.NewMessage(outgoing=True, pattern=URL_REGEX))
@@ -62,6 +74,11 @@ async def auto_download_handler(event):
     url = event.raw_text.strip()
     logger.info(f"🔗 لینک در Saved Messages: {url}")
     
+    # جایگزینی لینک‌های یوتیوب با آینه (برای دور زدن بلاک)
+    if "youtube.com" in url or "youtu.be" in url:
+        url = url.replace("youtube.com", "piped.video").replace("youtu.be", "piped.video")
+        logger.info(f"🔄 لینک به آینه تغییر کرد: {url}")
+
     status_msg = await event.reply("⏳ **در حال پردازش لینک...** لطفاً صبر کنید.")
     
     try:
@@ -106,7 +123,7 @@ async def auto_download_handler(event):
         await status_msg.edit(f"❌ **خطا در دانلود:**\n`{str(e)[:200]}`")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۴. حلقه آپدیت پروفایل (ساعت، آنلاین، تایپ)
+# ۴. حلقه آپدیت پروفایل
 # ══════════════════════════════════════════════════════════════════════════════
 async def update_profile_loop():
     while True:
@@ -136,7 +153,7 @@ async def update_profile_loop():
         await asyncio.sleep(60)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۵. نقطه ورود (Main)
+# ۵. نقطه ورود
 # ══════════════════════════════════════════════════════════════════════════════
 async def main():
     logger.info("🚀 اتصال به تلگرام...")
