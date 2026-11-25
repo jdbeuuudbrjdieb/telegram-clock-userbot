@@ -1,4 +1,4 @@
-name: Run Live Clock Userbot
+name: Run Super Userbot
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     - cron: "0 */6 * * *"
 
 jobs:
-  run-clock:
+  run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -18,21 +18,20 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Clock
+      - name: Run Bot
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
           SESSION_STRING: ${{ secrets.SESSION_STRING }}
           BASE_NAME: ${{ secrets.BASE_NAME }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          echo "--- DEBUG START ---"
-          if [ -z "$API_ID" ]; then echo "❌ API_ID is EMPTY"; else echo "✅ API_ID is SET"; fi
-          if [ -z "$API_HASH" ]; then echo "❌ API_HASH is EMPTY"; else echo "✅ API_HASH is SET"; fi
-          if [ -z "$SESSION_STRING" ]; then echo "❌ SESSION_STRING is EMPTY"; else echo "✅ SESSION_STRING is SET"; fi
-          echo "--- DEBUG END ---"
           python bot.py || echo "Restarting..."
 
       - name: Trigger next run
