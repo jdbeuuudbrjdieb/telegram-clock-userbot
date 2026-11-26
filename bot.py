@@ -1,14 +1,14 @@
 import os
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateProfileRequest, UpdateStatusRequest
 from telethon.tl.functions.messages import SetTypingRequest
 from telethon.tl.types import SendMessageTypingAction
-from telethon.errors import FloodWaitError, RPCError
+from telethon.errors import FloodWaitError
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ۱. تنظیمات لاگ
@@ -35,42 +35,67 @@ KABUL_TZ = ZoneInfo("Asia/Kabul")
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۳. هسته اصلی
+# ۳. حلقه اول: آپدیت ساعت و وضعیت آنلاین (هر ۳۰ ثانیه)
 # ══════════════════════════════════════════════════════════════════════════════
-async def master_loop():
-    logger.info("🌟 هسته اصلی فعال شد...")
-    
+async def clock_and_online_loop():
+    logger.info("⏰ حلقه ساعت و آنلاین بودن فعال شد.")
     while True:
         try:
+            # محاسبه زمان دقیق افغانستان
             now = datetime.now(KABUL_TZ)
             time_str = now.strftime("%H:%M")
             new_name = f"🕒 {time_str} | {BASE_NAME}"
             
+            # آپدیت نام و آنلاین
             await client(UpdateProfileRequest(first_name=new_name[:64]))
             await client(UpdateStatusRequest(offline=False))
             
-            try:
-                dialogs = await client.get_dialogs(limit=1)
-                peer = dialogs[0].entity if dialogs else await client.get_me()
-                await client(SetTypingRequest(peer=peer, action=SendMessageTypingAction()))
-            except: pass
-            
-            logger.info(f"✅ نام: '{new_name}' | آنلاین 🟢 | تایپ ⌨️")
+            logger.info(f"✅ ساعت و وضعیت آپدیت شد: '{new_name}' | آنلاین 🟢")
             
         except FloodWaitError as e:
             logger.warning(f"⚠️ محدودیت: {e.seconds} ثانیه")
             await asyncio.sleep(e.seconds)
         except Exception as e:
-            logger.error(f"❌ خطا: {e}")
-            await asyncio.sleep(10)
+            logger.error(f"❌ خطا در حلقه ساعت: {e}")
             
-        await asyncio.sleep(60)
+        # ۳۰ ثانیه صبر می‌کنیم تا ساعت دقیق بماند و وضعیت آنلاین تازه شود
+        await asyncio.sleep(30)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ۴. نقطه ورود
+# ۴. حلقه دوم: تایپ کردن مداوم (هر ۴ ثانیه)
+# ══════════════════════════════════════════════════════════════════════════════
+async def typing_loop():
+    logger.info("⌨️ حلقه تایپ کردن فعال شد.")
+    peer = None
+    
+    while True:
+        try:
+            # پیدا کردن چت هدف (آخرین چت باز شده یا Saved Messages)
+            if peer is None:
+                dialogs = await client.get_dialogs(limit=1)
+                peer = dialogs[0].entity if dialogs else await client.get_me()
+            
+            # ارسال سیگنال تایپ
+            await client(SetTypingRequest(peer=peer, action=SendMessageTypingAction()))
+            
+            # تلگرام سیگنال تایپ را بعد از ۵ ثانیه پاک می‌کند،
+            # پس هر ۴ ثانیه دوباره می‌فرستیم تا هرگز قطع نشود.
+            
+        except FloodWaitError as e:
+            logger.warning(f"⚠️ محدودیت تایپ: {e.seconds} ثانیه")
+            await asyncio.sleep(e.seconds)
+        except Exception as e:
+            logger.debug(f"⚠️ خطای تایپ (در حال تلاش مجدد): {e}")
+            peer = None # اگر خطا داد، چت را دوباره پیدا می‌کنیم
+            
+        # ۴ ثانیه صبر می‌کنیم
+        await asyncio.sleep(4)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ۵. نقطه ورود و اجرای موازی
 # ══════════════════════════════════════════════════════════════════════════════
 async def main():
-    logger.info("🚀 اتصال به تلگرام...")
+    logger.info("🚀 در حال اتصال به تلگرام...")
     await client.connect()
     
     if not await client.is_user_authorized():
@@ -78,8 +103,16 @@ async def main():
         return
 
     me = await client.get_me()
-    logger.info(f"✅ متصل شد: {me.first_name}")
-    await master_loop()
+    logger.info(f"✅ اتصال برقرار شد: {me.first_name}")
+    
+    # 🌟 جادوی مهندسی: اجرای همزمان دو حلقه (Parallel Execution)
+    asyncio.create_task(clock_and_online_loop())
+    asyncio.create_task(typing_loop())
+    
+    logger.info("🔥 هر دو حلقه فعال شدند. اکانت شما همیشه آنلاین و در حال تایپ است.")
+    
+    # ربات را روشن نگه می‌داریم
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
     try:
@@ -87,8 +120,7 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         logger.info("👋 خاموش شد.")
     finally:
-        # 🛡️ خاموشی امن: اتصال را قبل از بسته شدن سرور قطع می‌کنیم
+        # قطع امن اتصال برای جلوگیری از باطل شدن سشن
         try:
             client.loop.run_until_complete(client.disconnect())
-            logger.info("🔌 اتصال به تلگرام به درستی قطع شد.")
         except: pass
